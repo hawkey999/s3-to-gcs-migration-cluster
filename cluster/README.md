@@ -1,51 +1,20 @@
 # Amazon S3 MultiThread Resume Migration Cluster Solution  (Amazon S3多线程断点续传迁移集群方案)   
 
 [English Readme](./README-English.md)
-  
-  PROJECT LONGBOW  -  Amazon EC2 Autoscaling 集群，支撑海量文件于海外和中国Amazon S3之间传输   
-Cluster & Serverless Version 0.98  
 
   架构图如下：  
   Amazon S3 新增文件触发传输：
 ![Cluster Diagram New created object in S3](./img/02-new.png)  
   
-  Jobsender 扫描 Amazon S3 派发传输任务：
-![Cluster Diagram Jobsender scan buckets](./img/02-jobsender.png)  
-  如果需要定时运行Jobsender任务，可以登录EC2设置定时任务（crontab -e 命令）运行s3_migration_cluster_jobsender.py。  
-  
-## 特点
-* **海外和国内Amazon S3互传**：集群版适用于海量文件传输，无服务器版适合不定期突发传输。  
-* **快速且稳定**：多节点 X 单节点多文件 X 单文件多线程，支撑海量巨型文件并发传输。启用BBR加速。自动区分大小文件和 0 Size 文件走不同流程。  
-* **可靠**：Amazon SQS 消息队列管理文件级任务，断点续传，超时中断保护。每个分片MD5完整性校验。Single Point of True，最终文件合并以S3上的分片为准，确保分片一致。  
-* **安全**：内存转发不写盘，传输SSL加密，开源代码可审计，采用IAM Role和利用ParameterStore加密存储AcceesKey。  
-* **可控运营**：任务派发与传输速度相匹配，系统容量可控可预期；Amazon DynamoDB和SQS读写次数只与文件数相关，而与文件大小基本无关；日志自动收集；AWS CDK自动部署；  
-* **弹性成本优化**：集群自动扩展，结合 Amazon EC2 Spot节省成本；无服务器Lambda只按调用次数计费；支持直接存入Amazon S3各种存储级别，节省长期存储成本。
-* 可以与无服务器 AWS Lambda 版本一起运行，支持混合流量  
-  
 ## 工作原理  
 ### 流程  
 0. 预备阶段（可选）：Jobsender 获取源和目的 Bucket List并比对差异，形成Job List。并定期进行。
 
-1. Jobsender 发送 Job messages to SQS （每个 job 是Amazon S3上的一个文件），并记录到 DDB (仅做统计进度)
-Amazon S3 新增也可以直接触发Amazon SQS
+1. 对存量数据，适用 Jobsender 发送 Job messages to SQS 。S3 增量数据直接触发Amazon SQS
 
-2. Amazon EC2 or/and Lambda 从SQS获取Job. 每个EC2 instance获取多个Job，每个Lambda runtime获取一个Job
+2. Amazon EC2 从SQS获取Job. 每个EC2 instance获取多个Job，每个Lambda runtime获取一个Job
 
-3. Amazon EC2 or/and Lambda 对每个Job创建多线程，每个线程各自获取文件分片，并上传到目标 S3
-
-* Amazon EC2和Lambda可以分用也可以同时工作，各自取SQS Job，但要注意SQS的超时时间设定
-
-### 任务启动四种方式之一
-* Job Sender 去List多个源和目的桶进行比对
-
-* Amazon S3新增文件，直接触发Amazon SQS
-
-* 批量任务完成后，Job Sender 再次List比对
-
-* 定时任务触发Job Sender进行比对  
-
-四种启动方式示意图：  
-![四种启动方式图](./img/03.png)  
+3. Amazon EC2 对每个Job创建多线程，每个线程各自获取文件分片，并上传到目标 S3
 
 ### 性能与可控运营  
 ![核心原理图](./img/04.png)  
