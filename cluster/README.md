@@ -71,7 +71,7 @@ KMS key source：My current account/alias/aws/ssm  或选择其他你已有的�
 {
   "aws_access_key_id": "your_aws_access_key_id",
   "aws_secret_access_key": "your_aws_secret_access_key",
-  "region": "cn-northwest-1"
+  "region": "europe-west3"
 }
 ```
 配置示意图：  
