@@ -17,6 +17,8 @@ try:
     ssm_parameter_bucket = cfg.get('Basic', 'ssm_parameter_bucket')
     ssm_parameter_credentials = cfg.get('Basic', 'ssm_parameter_credentials')
     JobType = cfg.get('Basic', 'JobType')
+    SrcEndPointURL = cfg.get('Basic', 'SrcEndPointURL')
+    DestEndPointURL = cfg.get('Basic', 'DestEndPointURL')
     StorageClass = cfg.get('Mode', 'StorageClass')
     ifVerifyMD5Twice = cfg.getboolean('Debug', 'ifVerifyMD5Twice')
     Megabytes = 1024 * 1024
@@ -58,6 +60,8 @@ if __name__ == '__main__':
     # Get Environment
     sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_id, ssm = \
         set_env(JobType=JobType,
+                SrcEndPointURL=SrcEndPointURL,
+                DestEndPointURL=DestEndPointURL,
                 LocalProfileMode=LocalProfileMode,
                 table_queue_name=table_queue_name,
                 sqs_queue_name=sqs_queue_name,

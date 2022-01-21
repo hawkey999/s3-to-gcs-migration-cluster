@@ -44,7 +44,8 @@ def set_log(LoggingLevel, this_file_name):
 
 
 # Set environment
-def set_env(*, JobType, LocalProfileMode, table_queue_name, sqs_queue_name, ssm_parameter_credentials, MaxRetry):
+def set_env(*, JobType, SrcEndPointURL, DestEndPointURL, LocalProfileMode, 
+    table_queue_name, sqs_queue_name, ssm_parameter_credentials, MaxRetry):
     s3_config = Config(max_pool_connections=200, retries={'max_attempts': MaxRetry})  # boto default 10
 
     if os.uname()[0] == 'Linux' and not LocalProfileMode:  # on EC2, use EC2 role
@@ -76,11 +77,11 @@ def set_env(*, JobType, LocalProfileMode, table_queue_name, sqs_queue_name, ssm_
             region_name=credentials["region"]
         )
         if JobType.upper() == "PUT":
-            s3_src_client = boto3.client('s3', region, config=s3_config)
-            s3_des_client = credentials_session.client('s3', config=s3_config)
+            s3_src_client = boto3.client('s3', region, config=s3_config, endpoint_url=SrcEndPointURL)
+            s3_des_client = credentials_session.client('s3', config=s3_config, endpoint_url=DestEndPointURL)
         elif JobType.upper() == "GET":
-            s3_des_client = boto3.client('s3', region, config=s3_config)
-            s3_src_client = credentials_session.client('s3', config=s3_config)
+            s3_des_client = boto3.client('s3', region, config=s3_config, endpoint_url=DestEndPointURL)
+            s3_src_client = credentials_session.client('s3', config=s3_config, endpoint_url=SrcEndPointURL)
         else:
             logger.error('Wrong JobType setting in config.ini file')
             sys.exit(0)
