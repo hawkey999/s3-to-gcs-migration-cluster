@@ -1,5 +1,6 @@
 #!/bin/bash -v
 yum update -y
+yum install git -y
 yum install python3 -y
 pip3 install boto3
 

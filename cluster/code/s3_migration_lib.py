@@ -31,7 +31,7 @@ def set_log(LoggingLevel, this_file_name):
     elif LoggingLevel == 'DEBUG':
         logger.setLevel(logging.DEBUG)
     # File logging
-    log_path = Path(__file__).parent.parent / 'amazon-s3-migration-log'
+    log_path = Path(__file__) / 'amazon-s3-migration-log'
     if not Path.exists(log_path):
         Path.mkdir(log_path)
     start_time = datetime.datetime.now().isoformat().replace(':', '-')[:19]
@@ -69,7 +69,7 @@ def set_env(*, JobType, SrcEndPointURL, DestEndPointURL, LocalProfileMode,
             )['Parameter']['Value'])
         except Exception as e:
             logger.error(f'Fail to get {ssm_parameter_credentials} in SSM Parameter store. '
-                         f'Fix and restart Jobsender. {str(e)}')
+                         f'Fix and restart. {str(e)}')
             sys.exit(0)
         credentials_session = boto3.session.Session(
             aws_access_key_id=credentials["aws_access_key_id"],
@@ -847,7 +847,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
             prefix_and_key=Des_key,
             UploadIdList=multipart_uploaded_list
         )
-        if response_check_upload == 'UPLOAD':
+        if response_check_upload == 'UPLOAD':  # 新建文件
             try:
                 logger.info(f'Create multipart upload - {Des_bucket}/{Des_key}')
                 response_new_upload = s3_des_client.create_multipart_upload(
@@ -856,7 +856,6 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                     StorageClass=StorageClass
                 )
                 # If update versionID enabled, update s3 versionID
-                # 但可能会出现中断重传的时候，拿到了另一个新version，从而导致文件半老半新，所以需要在最后完成时候校验一次versionId
                 if UpdateVersionId:
                     versionId, Size = head_s3_version(
                         s3_src_client=s3_src_client,
@@ -875,7 +874,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 logger.error(f'Fail to create new multipart upload - {Des_bucket}/{Des_key} - {str(e)}')
                 upload_etag_full = "ERR"
                 break
-        else:
+        else:  # 断点续传
             reponse_uploadId = response_check_upload
             logger.info(f'Resume upload id: {Des_bucket}/{Des_key}')
             # 获取已上传partnumberList
@@ -885,8 +884,8 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 uploadId=reponse_uploadId,
                 s3_des_client=s3_des_client
             )
-            # Get versionId/Size from DDB，如果传输前或中断后文件被替换，Size可能改变，所以重新取启动时候的versionId和当时的Size
-            if UpdateVersionId:
+            # 断点续传 Get versionId/Size from DDB，如果传输前或中断后文件被替换，Size可能改变，所以重新取启动时候的versionId和当时的Size
+            if GetObjectWithVersionId:
                 versionId, Size = ddb_get(
                     table=table,
                     Src_bucket=Src_bucket,
@@ -905,11 +904,12 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
         # Write log to DDB in first round of job
         percent = int(len(partnumberList) / len(indexList) * 100)
         # ddb_this_round(table, percent, Src_bucket, Src_key, instance_id)
-        ddb_start(table=table,
-                  percent=percent,
-                  job=job,
-                  instance_id=instance_id,
-                  new_upload=(response_check_upload == 'UPLOAD'))
+        if GetObjectWithVersionId:  # 如果之前有已完成的记录，会覆盖掉
+            ddb_start(table=table,
+                    percent=percent,
+                    job=job,
+                    instance_id=instance_id,
+                    new_upload=(response_check_upload == 'UPLOAD'))
 
         # Job Thread: uploadPart, 超时或Key不对返回 TIMEOUT/QUIT
         upload_etag_full = job_processor(
@@ -995,12 +995,13 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 # 重新执行Job
 
         # DynamoDB log: ADD status: DONE/ERR(upload_etag_full)
-        ddb_complete(
-            upload_etag_full=upload_etag_full,
-            table=table,
-            Src_bucket=Src_bucket,
-            Src_key=Src_key
-        )
+        # if GetObjectWithVersionId:
+        #     ddb_complete(
+        #         upload_etag_full=upload_etag_full,
+        #         table=table,
+        #         Src_bucket=Src_bucket,
+        #         Src_key=Src_key
+        #     )
 
         # 正常结束 md5_retry 循环
         break
@@ -1139,11 +1140,12 @@ def step_fn_small_file(*, job, table, s3_src_client, s3_des_client, instance_id,
 
     logger.info(f'Start small: {Src_bucket}/{Src_key}, Size: {Size}, versionId: {versionId}')
     # Write DDB log for first round
-    ddb_start(table=table,
-              percent=0,
-              job=job,
-              instance_id=instance_id,
-              new_upload=True)
+    # if GetObjectWithVersionId:
+    #     ddb_start(table=table,
+    #             percent=0,
+    #             job=job,
+    #             instance_id=instance_id,
+    #             new_upload=True)
 
     upload_etag_full = []
     for retryTime in range(MaxRetry + 1):
@@ -1194,11 +1196,12 @@ def step_fn_small_file(*, job, table, s3_src_client, s3_des_client, instance_id,
             return "TIMEOUT"
 
     # Write DDB log for complete
-    ddb_complete(
-        upload_etag_full=upload_etag_full,
-        table=table,
-        Src_bucket=Src_bucket,
-        Src_key=Src_key
-    )
+    # if GetObjectWithVersionId:
+    #     ddb_complete(
+    #         upload_etag_full=upload_etag_full,
+    #         table=table,
+    #         Src_bucket=Src_bucket,
+    #         Src_key=Src_key
+    #     )
     # complete one job
     return upload_etag_full
