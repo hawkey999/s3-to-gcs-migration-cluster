@@ -26,7 +26,7 @@ cd amazon-s3-resumable-upload  || exit
 # download the code here:
 # aws s3 sync s3://s3-migration-deploy-code/test/
 
-# Add to start application
+# Add to auto-start application
 echo "nohup python3 /home/ec2-user/amazon-s3-resumable-upload/s3_migration_cluster_worker.py &" >> /etc/rc.local
 chmod +x /etc/rc.local
 
