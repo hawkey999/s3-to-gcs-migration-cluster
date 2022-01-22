@@ -31,7 +31,7 @@ def set_log(LoggingLevel, this_file_name):
     elif LoggingLevel == 'DEBUG':
         logger.setLevel(logging.DEBUG)
     # File logging
-    log_path = Path(__file__) / 'amazon-s3-migration-log'
+    log_path = Path(__file__).parent / 'amazon-s3-migration-log'
     if not Path.exists(log_path):
         Path.mkdir(log_path)
     start_time = datetime.datetime.now().isoformat().replace(':', '-')[:19]
