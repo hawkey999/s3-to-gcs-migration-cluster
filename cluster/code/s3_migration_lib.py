@@ -995,13 +995,13 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 # 重新执行Job
 
         # DynamoDB log: ADD status: DONE/ERR(upload_etag_full)
-        # if GetObjectWithVersionId:
-        #     ddb_complete(
-        #         upload_etag_full=upload_etag_full,
-        #         table=table,
-        #         Src_bucket=Src_bucket,
-        #         Src_key=Src_key
-        #     )
+        if GetObjectWithVersionId:
+            ddb_complete(
+                upload_etag_full=upload_etag_full,
+                table=table,
+                Src_bucket=Src_bucket,
+                Src_key=Src_key
+            )
 
         # 正常结束 md5_retry 循环
         break
