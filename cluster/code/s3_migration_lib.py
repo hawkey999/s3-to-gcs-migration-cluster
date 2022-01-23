@@ -725,7 +725,7 @@ def job_looper(*, sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_
                                     'Des_key': Des_key,
                                     'versionId': versionId
                                 }
-                    if 'Des_bucket' not in job and 'Event' not in job:
+                    if 'Src_bucket' not in job and 'Event' not in job:
                         logger.warning(f'Wrong sqs job: {json.dumps(job, default=str)}')
                         logger.warning('Try to handle next message')
                         time.sleep(1)
