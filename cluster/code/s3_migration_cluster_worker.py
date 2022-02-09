@@ -72,6 +72,20 @@ if __name__ == '__main__':
     # Program start processing here
     #######
 
+    # Get ignore file list
+    ignore_list_path = os.path.split(os.path.abspath(__file__))[0] + '/s3_migration_ignore_list.txt'
+    ignore_list = []
+    try:
+        with open(ignore_list_path, 'r') as f:
+            ignore_list = f.read().splitlines()
+        logger.info(f'Found ignore files list Length: {len(ignore_list)}, in {ignore_list_path}')
+    except Exception as e:
+        if e.args[1] == 'No such file or directory':
+            logger.info(f'No ignore files list in {ignore_list_path}')
+            print(f'No ignore files list in {ignore_list_path}')
+        else:
+            logger.info(str(e))
+
     # For concur jobs(files)
     logger.info(f'Start concurrent {MaxParallelFile} jobs.')
     with concurrent.futures.ThreadPoolExecutor(max_workers=MaxParallelFile) as job_pool:
@@ -94,5 +108,6 @@ if __name__ == '__main__':
                             Des_bucket_default=Des_bucket_default,
                             Des_prefix_default=Des_prefix_default,
                             UpdateVersionId=UpdateVersionId,
-                            GetObjectWithVersionId=GetObjectWithVersionId
+                            GetObjectWithVersionId=GetObjectWithVersionId,
+                            ignore_list=ignore_list
                             )

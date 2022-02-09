@@ -682,7 +682,20 @@ def completeUpload(*, uploadId, Des_bucket, Des_key, len_indexList, s3_des_clien
 def job_looper(*, sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_id,
                StorageClass, ChunkSize, MaxRetry, MaxThread, ResumableThreshold,
                JobTimeout, ifVerifyMD5Twice, CleanUnfinishedUpload,
-               Des_bucket_default, Des_prefix_default, UpdateVersionId, GetObjectWithVersionId):
+               Des_bucket_default, Des_prefix_default, UpdateVersionId, GetObjectWithVersionId, ignore_list):
+    
+    # ignore key
+    def ignore_key_func(ignore_list, key):
+        # 排除掉 ignore_list 里面列的 bucket/key
+        ignore_match = False
+        for ignore_key in ignore_list:
+            if key.startswith(ignore_key):
+                ignore_match = True
+                logger.info(f"Key <{key}> hit ignore prefix <{ignore_key}>")
+                break
+            # 匹配不上，循环下一个 ignore_key
+        return ignore_match
+
     while True:
         # Get Job from sqs
         try:
@@ -732,6 +745,9 @@ def job_looper(*, sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_
                         continue
                     if 'versionId' not in job:
                         job['versionId'] = 'null'
+
+                    if ignore_key_func(ignore_list, job['Src_key']):
+                        job['Event']="HitIgnorePrefix"
 
                     # 主流程
                     if 'Event' not in job:
