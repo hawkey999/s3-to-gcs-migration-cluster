@@ -1,2 +1,2 @@
-gatk-test-data/README
-covid19-lake/cfn/
+myprefix/000000050
+myprefix/000000100
