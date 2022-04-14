@@ -689,7 +689,7 @@ def job_looper(*, sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_
         # 排除掉 ignore_list 里面列的 bucket/key
         ignore_match = False
         for ignore_key in ignore_list:
-            if key.startswith(ignore_key):
+            if fnmatchcase(key, ignore_key):   # 原来是 key.startwith 改这个fnmatchcase 支持通配符
                 ignore_match = True
                 logger.info(f"Key <{key}> hit ignore prefix <{ignore_key}>")
                 break
