@@ -490,7 +490,7 @@ def job_processor(*, uploadId, indexList, partnumberList, job, s3_src_client, s3
                     md5list[partnumber - 1] = chunkdata_md5
                     break  # 完成下载，不用重试
                 except ClientError as err:
-                    if err.response['Error']['Code'] in ['NoSuchKey', 'AccessDenied']:
+                    if err.response['Error']['Code'] in ['NoSuchKey', 'AccessDenied', 'InvalidObjectState']:
                         # 没这个ID，文件已经删除，或者无权限访问
                         logger.error(f"ClientError: Fail to access {Src_bucket}/{Src_key} - ERR: {str(err)}.")
                         stop_signal.set()
@@ -791,7 +791,7 @@ def job_looper(*, sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_
                     logger.info(f'upload_etag_full={upload_etag_full}, job={str(job)}')
                     if upload_etag_full != "TIMEOUT":
                         # 如果是超时的就不删SQS消息，是正常结束或QUIT就删
-                        # QUIT 是 NoSuchUpload, NoSuchKey, AccessDenied，可以认为没必要再让下一个worker再试了
+                        # QUIT 是 NoSuchUpload, NoSuchKey, AccessDenied，InvalidObjectState可以认为没必要再让下一个worker再试了
                         # 直接删除SQS，并且DDB并不会记录结束状态
 
                         try:
@@ -1197,7 +1197,7 @@ def step_fn_small_file(*, job, table, s3_src_client, s3_des_client, instance_id,
             # 结束 Upload/download
             break
         except ClientError as e:
-            if e.response['Error']['Code'] in ['NoSuchKey', 'AccessDenied']:
+            if e.response['Error']['Code'] in ['NoSuchKey', 'AccessDenied', 'InvalidObjectState']:
                 logger.error(f"Fail to access {Src_bucket}/{Src_key} - ERR: {str(e)}.")
                 return "QUIT"
             logger.warning(f'Download/Upload small file Fail: {Src_bucket}/{Src_key}, '
