@@ -1,4 +1,4 @@
-# AWS S3 to GCS (Google Storage) 近实时增量数据同步
+# 3GSync - AWS S3 to GCS 近实时增量数据同步
 
   架构图如下：  
   Amazon S3 新增文件触发传输：
@@ -205,7 +205,7 @@ your_src_bucket/your_
 
 ## 利用 S3 Inventory Report 投递任务  
 处理csv文件，并发送到SQS的示例程序： tools/handle_s3_inventory/s3_inventory_csv_to_sqs.py
-
+适合S3 bucket里面文件非常多的场景，利用Inventory的文件列表，而避免去List Bucket  
 
 ## 版本控制支持
 ### 为什么要启用 S3 版本控制
@@ -265,6 +265,10 @@ True意味着：Worker 在获取源文件的时候，是否带 versionId 去获�
 * 权限问题：不是所有桶都会开放 GetObjectVersion 权限。例如某些 OpenDataSet 即使打开了 Versioning 功能，但却没有开放 GetObjectVersion 权限。
 
 ## 局限与提醒
+* 不适合文件不变，而内容变更很频繁的场景  
+
+* 目前实现是增量数据Copy，没有做删除。即源文件被删除，并不会触发目标文件删除  
+
 * 所需内存 = 并发数 * ChunckSize 。小于50GB的文件，ChunckSize为5MB，大于50GB的文件，则ChunkSize会自动调整为约等于: 文件Size/10000。  
 例如如果平均要处理的文件 Size 是 500GB ，ChunckSize 会自动调整为50MB，并发设置是 5 File x 10 Concurrency/File = 50，所以需要的EC2或Lambda的可运行内存约为 50 x 50MB = 2.5GB。 
 如需要提高并发度，可以调整配置，但对应的EC2或Lambda内存也要相应增加。 
