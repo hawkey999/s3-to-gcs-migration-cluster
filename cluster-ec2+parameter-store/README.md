@@ -1,18 +1,21 @@
 # 3GSync - AWS S3 to GCS 近实时增量数据同步
 
-Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS：
+  架构图如下：  
+  Amazon S3 新增文件触发传输：
 ![Cluster Diagram New created object in S3](./img/01.png)  
   
 ## 工作原理  
-0. 存量数据列表（可选功能）：Jobsender 获取源和目的 Bucket List并比对差异，发送 Job messages 到 SQS。  
+0. 存量数据列表（可选）：Jobsender 获取源和目的 Bucket List并比对差异，发送 Job messages 到 SQS。  
 
 1. Amazon S3 新增文件 Object Create Event 直接触发Amazon SQS，每个Object是一个Job。  
 
-2. 3GSync运行在 GCE 上，从SQS获取Job。每个GCE多线程获取多个Job。对每个Job创建多线程，每个线程各自获取文件分片，并上传到目标 GCS  
+2. Amazon EC2 从SQS获取Job。每个EC2 instance多线程获取多个Job。  对每个Job创建多线程，每个线程各自获取文件分片，并上传到目标 GCS  
 
-3. 传输完成，则自动删除SQS中这个Job消息；如果传输过程中断，则Job消息不会被删除，然后在1小时超时过时后，该消息会重新出现并被另一个GCE或进程获取，并进行重传。小文件重传会直接重新开始下载，这样效率高；大文件重传会先查询目标桶中该文件是否存在，存在则进行续传；大小文件的分界标准可以设定（ResumableThreshold 目前设置为50MB）；  
+3. 传输完成，则自动删除SQS中这个Job消息；如果传输过程中断，则Job消息不会被删除，然后在超时过时后，该消息会重新出现并被另一个EC2或进程获取，并进行重传。小文件重传会直接重新开始下载，这样效率高；大文件重传会先查询目标桶中该文件是否存在，存在则进行续传；大小文件的分界标准可以设定（ResumableThreshold 目前设置为50MB）；  
 
-4. 两个云之间的网络建议走公网，即 S3-> Internet -> GCE –> GCS，这样带宽最高，充分利用 AWS 与 Google 之间的互联网络；如果走专线，需要在一侧GCP设置 VPC Google Private Access ，并设置DNS解析。并在AWS一侧设置 S3 Private Link Endpoint，并设置 DNS 解析。
+4. 迁移集群建议部署在源S3相同Region，并启用 VPC S3 Endpoint(GW)，这样不走公网。  
+
+5. 两个云之间的网络建议走公网，即 S3-> EC2 –Internet–>GCS，这样带宽最高，充分利用 AWS 与 Google 之间的互联网络；如果走专线，需要在GCP设置 VPC Google Private Access ，并设置DNS解析。
 
 ### 性能与可控运营  
 * 单Worker节点并发多线程从Amazon SQS获取多个文件任务，每个文件任务只会被一个Worker获得。Worker对每个任务并发多线程进行传输，这样对系统流量更可控，稳定性比把一个文件分散多节点要高，也不会出现一个大文件就堵塞全部通道，特别适合大量大文件传输。
@@ -21,56 +24,37 @@ Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并�
 ### 可靠与安全性  
 * 每个分片传输完成都会在GCS上做MD5完整性校验。  
 * 多个超时中断与重试保护，保证单个文件的送达及时性：  
-3GSync worker上有任务超时机制，s3_migration_cluster_config.ini 中默认配置1小时  
-Amazon SQS 消息设置 Message InvisibleTime 对超时消息进行恢复，驱动节点做断点重传，需配置与Worker超时时间一致。如果混合集群和Serverless架构，则以时间长的那方来设置InvisibleTime  
-Amazon SQS 配置死信队列DLQ，确保消息被多次重新仍失败进入DLQ做额外保护处理。
+Amazon EC2 worker上有任务超时机制，s3_migration_cluster_config.ini 中默认配置1小时  
+Amazon SQS 消息设置 Message InvisibleTime 对超时消息进行恢复，驱动节点做断点重传，建议与Worker超时时间一致。如果混合集群和Serverless架构，则以时间长的那方来设置InvisibleTime  
+Amazon SQS 配置死信队列DLQ，确保消息被多次重新仍失败进入DLQ做额外保护处理。CDK中默认配置24次。 
 * Single point of TRUE：把最终GCS作为分片列表的管理，合并文件时缺失分片则重新传。
+* 建议一批次任务在全部任务完成后，运行jobsender进行List比对。或定期运行核对源和目的S3的一致性。
 * 文件分片只经worker内存缓存即转发，不去占I/O写本地磁盘（速度&安全）
-* 传输为 SSL 加密传输
-* 开源代码，只使用 AWS SDK, GCP SDK 和 Python3 内置的库，无任何其他第三方库。
-* ak/sk 密钥保存在加密的Secret Manager，不在代码或配置文件保存任何密钥  
+* 传输为Amazon S3 API / GCS XML API: SSL加密传输
+* 开源代码，只使用 AWS SDK 和 Python3 内置的库，无任何其他第三方库。
+* 一侧Amazon S3访问采用IAM Role，另一侧GCS访问的access key保存在SSM ParaStore中(KMS加密)，或Lambda的EnvVar(KMS加密)，不在代码或配置文件保存任何密钥  
 
 ### 弹性成本  
-* 可设置 Managed Instance Group 自动扩展和关机
+* Autoscaling Group 自动扩展和关机
 * 使用 Spot Instances 降低成本，Worker节点无状态，可承受随时中断
+* 可运行 AWS Lambda Serverless 处理不定期，突发任务
 * 可根据自己的场景测试寻找最佳性价比：
-	调整最低配置 GCE Memory Jobs/node * Threads/Jobs * Nodes 组合，包括考虑：数据传送周期、文件大小、批次大小、可容忍延迟、成本。常见是采用 2 cores 2GB memory 即可。  
-* 存入目标存储级别可直接设置 Archive 等
+	调整最低配置Amazon EC2 Type和AWS Lambda Memory Jobs/node * Threads/Jobs * Nodes 组合，包括考虑：数据传送周期、文件大小、批次大小、可容忍延迟、成本。常见是采用 2 cores 2GB memory 即可。  
+* 存入目标存储级别可直接设置 IA, Deep Archive 等
 
 ## 部署
 ### 1. 配置密钥
-* 新建AWS IAM User给读取 S3 & SQS 用，并获取 ak/sk 密钥，需要的IAM权限：  
-读取S3: AmazonS3ReadOnlyAccess, 读写DynamoDB AmazonDynamoDBFullAccess, 读写SQS AmazonSQSFullAccess    
-如果是单独授权S3访问权限：ListBucket/GetObject/GetObjectVersion/ListBucketVersions  
-![IAM](./img/06.png)   
-  
-* 在 GCS 的设置“互操作性”中可以获取 GCP 一侧的 ak/sk 密钥  
-
-* 配置 GCP Secret Manager 用于保存S3和GCS一侧的访问密钥  
+* 配置 AWS System Manager Parameter Store 新增这个参数，用于保存GCS一侧的访问密钥 
+名称：s3_migration_credentials  
+类型：SecureString  
+级别：Standard  
+KMS key source：My current account/alias/aws/ssm  或选择其他你已有的加密 KMS Key  
+这个 s3_migration_credentials 是用于访问GCS的访问密钥。配置示例：  
 ```
-GET 模式需要在GCP Secret Manager手工新建一个密钥，配置资源ID到配置ini文件中
-密钥格式如下，source是S3，destination是GCS：
-{ 
-    "source": 
-    {
-        "aws_access_key_id": "your_S3_access_key_id",
-        "aws_secret_access_key": "your_S3_secret_access_key",
-        "region": "eu-central-1"
-    },
-    "destination":
-    {
-        "aws_access_key_id": "your_GCS_access_key_id",
-        "aws_secret_access_key": "your_GCS_secret_access_key",
-        "region": "europe-west3"
-    }
-}
-
-PUT 模式需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter, 并在上面等号后面填 s3_migrate_credentials
-设置GCS的access_key：
 {
-    "aws_access_key_id": "your_aws_access_key_id",
-    "aws_secret_access_key": "your_aws_secret_access_key",
-    "region": "europe-west3"
+  "aws_access_key_id": "your_aws_access_key_id",
+  "aws_secret_access_key": "your_aws_secret_access_key",
+  "region": "europe-west3"
 }
 ```
 配置示意图：  
@@ -135,29 +119,77 @@ SQS Visibility timeout = 1 hour，Message retention period = 14 days
 Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失败的消息  
 建好之后，要指定主SQS的死信队列是这个，以及重试多少次之后会进入死信队列  
 
-### 5. 设置 s3 bucket trigger SQS  
+4. 设置 s3 bucket trigger SQS  
 在存储桶属性里面设置 Event notifications  
 如果S3跟SQS不在同一个账号下，则SQS queue这里选择 SQS的ARN  
 ![S3 trigger SQS](./img/05.png) 
 
-### 6. 创建和设置 GCE 实例组 Managed Instance Group (Stateless)  
-服务器的IAM需要有访问 Secret Manager Secret Accessor 的权限
-代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。源代码：https://github.com/hawkey999/s3-to-gcs-migration-cluster/cluster-gce+secret-manager
-配置 s3_migration_cluster_config.ini 文件，然后运行文件 python3 s3_migration_cluster_worker.py  
-  
-配置文件至少需要修改：
+5. 新建IAM role for EC2  
+IAM权限：  
+* 读取S3: AmazonS3ReadOnlyAccess  
+* 读写DynamoDB AmazonDynamoDBFullAccess  
+* 读写SQS AmazonSQSFullAccess  
+* 读取ssm:GetParameter AmazonSSMReadOnlyAccess  
+如果是单独授权S3访问权限，或者是跨账号访问S3，则源S3权限至少要放开这四个权限给 EC2的IAM Role：ListBucket/GetObject/GetObjectVersion/ListBucketVersions  
+![IAM](./img/06.png) 
+
+6. 创建和设置 EC2 组  
+EC2服务器配置上一步骤创建的IAM Role  
+代码下载方式：建议代码放 s3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。源代码：https://github.com/hawkey999/s3-to-gcs-migration-cluster/tree/main/cluster/code   
+配置 s3_migration_cluster_config.ini 文件：  
+* 设置DynamoDB的名称  
+* 设置SQS的名称  
+* 目标Bucket的桶名和Prefix，Prefix可以为空  
+* LoggingLevel = WARNING or INFO  
+* 适当调整 MaxThread 和 MaxParallelFile  
+* 视忽是否要利用versionId来保证文件完整性，见下节的说明来配置 GetObjectWithVersionId  
+然后运行文件 python3 s3_migration_cluster_worker.py  
+代码中有示例的完整的启动脚本 startup-script-sample.txt  
+
+* Optional: 如果有需要可以修改默认的 ./cluster/code/s3_migration_cluster_config.ini 配置(例如JobType，或者并发线程数)说明如下：
 ```
+* JobType = PUT 或 GET  (default: PUT)  
+决定了Worker把自己的IAM Role用来访问源还是访问目的S3， PUT表示EC2跟目标S3不在一个Account，GET表示EC2跟源S3不在一个Account  
+
 * Des_bucket_default/Des_prefix_default
-配置目标桶名字，前缀可以留空
+是给Amazon S3新增文件触发Amazon SQS的场景，用来配置目标桶/前缀的。
+对于Jobsender扫描S3并派发Job的场景，不需要配置这两项。即使配置了，程序看到SQS消息里面有就会使用消息里面的目标桶/前缀
+
+* table_queue_name 
+访问的Amazon SQS和DynamoDB的表名，需与CloudFormation/CDK创建的ddb/sqs名称一致
+
+* ssm_parameter_bucket 
+在AWS SSM ParameterStore 上保存的参数名，用于保存buckets的信息，需与CloudFormation/CDK创建的 parameter store 的名称一致
 
 * ssm_parameter_credentials 
-把前面创建的GCP Secret Manager密钥，复制”资源ID“到ssm_parameter_credentials的等号后面
+在 SSM ParameterStore 上保存的另一个账户访问密钥的那个参数名，需与CloudFormation/CDK创建的 parameter store 的名称一致
+
+* StorageClass = STANDARD|REDUCED_REDUNDANCY|STANDARD_IA|ONEZONE_IA|INTELLIGENT_TIERING|GLACIER|DEEP_ARCHIVE
+选择目标存储的存储类型, default STANDARD
+
+* ResumableThreshold  (default 5MB)
+单位MBytes，小于该值的文件，则开始传文件时不走Multipart Upload，不做断点续传，节省性能  
+
+* MaxRetry  (default 20)
+API Call在应用层面的最大重试次数
+
+* MaxThread  (default 20)
+单文件同时working的Thread进程数量  
+
+* MaxParallelFile  (default 5)
+并行操作文件数量
+
+* JobTimeout  (default 3600)
+单个文件传输超时时间，Seconds 秒
+
+* LoggingLevel = WARNING | INFO | DEBUG  (default: INFO)
+* 不建议修改：ifVerifyMD5Twice, ChunkSize, CleanUnfinishedUpload, LocalProfileMode
+* 隐藏参数 max_pool_connections=200 在 s3_migration_lib.py
 ```
-![资源ID](./img/02b.png) 
+* 手工配置时，注意三个超时时间的配合： Amazon SQS, EC2 JobTimeout, Lambda，CDK 默认部署是SQS/EC2 JobTimeout为1小时  
 
-cluster-ec2+parameter-store 那个是给部署在AWS EC2一侧的场景中使用的
 
-## 可选：文件过滤模式   
+## 文件过滤模式   
 * 在迁移程序代码中增加一个Ignore List，在SQS获取消息后会检查Prefix是否在这个Ignore List里面，如果在的话就跳过迁移传输，而直接删除SQS消息。编辑 s3_migration_ignore_list.txt 增加你要忽略对象的 bucket/key，一个文件一行，可以使用通配符如 "*"或"?"，例如：  
 ```
 your_src_bucket/your_exact_key.mp4
@@ -167,11 +199,11 @@ your_src_bucket/your_
 */readme.md
 ```
 
-## 如何批量配置 S3 Event Trigger
+## 批量配置 S3 Event Trigger
 代码 tools/s3-event-trigger-tool/add_trigger.py，自动读取prefix_list.txt中的所有Prefix，并批量设置到AWS S3的Event Trigger列表中。  
 代码 tools/s3-event-trigger-tool/list_trigger.py，列出S3当前Bucket所有设置的 Event Trigger Prefix  
 
-## 如何利用 S3 Inventory Report 投递任务  
+## 利用 S3 Inventory Report 投递任务  
 处理csv文件，并发送到SQS的示例程序： tools/handle_s3_inventory/s3_inventory_csv_to_sqs.py
 适合S3 bucket里面文件非常多的场景，利用Inventory的文件列表，而避免去List Bucket  
 

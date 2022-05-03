@@ -1,0 +1,11 @@
+[{
+    "src_bucket": "your_global_bucket_1",
+    "src_prefix": "your_prefix",
+    "des_bucket": "your_china_bucket_1",
+    "des_prefix": "prefix_1"
+    }, {
+    "src_bucket": "your_global_bucket_2",
+    "src_prefix": "your_prefix",
+    "des_bucket": "your_china_bucket_2",
+    "des_prefix": "prefix_2"
+}]
