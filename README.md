@@ -142,9 +142,9 @@ Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失�
 
 ### 6. 创建和设置 GCE 实例组 Managed Instance Group (Stateless)  
 服务器的IAM需要有访问 Secret Manager Secret Accessor 的权限
-代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。源代码：https://github.com/hawkey999/s3-to-gcs-migration-cluster/cluster-gce+secret-manager
-配置 s3_migration_cluster_config.ini 文件，然后运行文件 python3 s3_migration_cluster_worker.py  
-  
+代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。  
+源代码：https://github.com/hawkey999/s3-to-gcs-migration-cluster/cluster-gce+secret-manager  
+* 配置 s3_migration_cluster_config.ini 文件
 配置文件至少需要修改：
 ```
 * Des_bucket_default/Des_prefix_default
@@ -154,8 +154,14 @@ Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失�
 把前面创建的GCP Secret Manager密钥，复制”资源ID“到ssm_parameter_credentials的等号后面
 ```
 ![资源ID](./img/02b.png) 
-
-cluster-ec2+parameter-store 那个是给部署在AWS EC2一侧的场景中使用的
+  
+* 安装Python包  
+pip3 install -r requirements.txt   
+  
+* 然后运行文件  
+python3 s3_migration_cluster_worker.py   
+   
+* 备选模块：cluster-ec2+parameter-store 那个是给部署在AWS EC2一侧的场景中使用的  
 
 ## 可选：文件过滤模式   
 * 在迁移程序代码中增加一个Ignore List，在SQS获取消息后会检查Prefix是否在这个Ignore List里面，如果在的话就跳过迁移传输，而直接删除SQS消息。编辑 s3_migration_ignore_list.txt 增加你要忽略对象的 bucket/key，一个文件一行，可以使用通配符如 "*"或"?"，例如：  
