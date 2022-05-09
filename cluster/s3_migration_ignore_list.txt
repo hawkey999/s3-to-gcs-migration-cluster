@@ -1,2 +1,2 @@
-myprefix/000000050
-myprefix/000000100
+your_src_bucket/myprefix_igorne/000000050
+your_src_bucket/myprefix/000000100

@@ -1,9 +1,10 @@
 # 3GSync - AWS S3 to GCS 近实时增量数据同步
 
-Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS。3GSync也可以配置为运行在GCP的GCE上，架构图如下：  
+Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS。  
+* 3GSync 可以运行在 GCP GCE 上，架构图如下：  
 ![Cluster Diagram gcp](./img/01.png)  
   
-3GSync也可以运行在 AWS EC2 上，  
+* 3GSync 也可以运行在 AWS EC2 上，架构图如下：  
 ![Cluster Diagram ec2](./img/e01.png)  
 
 ## 工作原理  
@@ -42,16 +43,16 @@ Amazon SQS 配置死信队列DLQ，确保消息被多次重新仍失败进入DLQ
 
 ## 部署
 ### 1. 配置密钥
-* 新建AWS IAM User给读取 S3 & SQS 用，并获取 ak/sk 密钥，需要的IAM权限：  
+* 服务器运行在GCP GCE的情况：新建AWS IAM User给读取 S3/SQS/DynamoDB 用，并获取 AK/SK 密钥，需要的IAM权限：  
 读取S3: AmazonS3ReadOnlyAccess, 读写DynamoDB AmazonDynamoDBFullAccess, 读写SQS AmazonSQSFullAccess    
-如果是单独授权S3访问权限：ListBucket/GetObject/GetObjectVersion/ListBucketVersions  
 ![IAM](./img/06.png)   
+对于服务器运行在AWS EC2的情况：新建AWS IAM Role给服务器读取 S3、SQS、DynamoDB、SSM 用。  
   
 * 在 GCS 的设置“互操作性”中可以获取 GCP 一侧的 ak/sk 密钥  
 
-* 配置 GCP Secret Manager 用于保存S3和GCS一侧的访问密钥  
+* 配置 S3 和 GCS 的访问密钥  
 ```
-GET 模式(3GSync运行在GCP GCE)需要在GCP Secret Manager手工新建一个密钥，配置资源ID到配置ini文件中
+GET 模式(3GSync运行在GCP GCE)需要在GCP Secret Manager手工新建一个密钥，后面要这个Secret的资源ID到配置ini文件中  
 密钥格式如下，source是S3，destination是GCS：
 { 
     "source": 
@@ -68,7 +69,7 @@ GET 模式(3GSync运行在GCP GCE)需要在GCP Secret Manager手工新建一个�
     }
 }
 
-PUT 模式(3GSync运行在AWS EC2)需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter, 并在上面等号后面填 s3_migrate_credentials
+PUT 模式(3GSync运行在AWS EC2)需要在 AWS SSM Parameter Store 新建一个名为 "s3_migration_credentials" 的 parameter, 后面要配置s3_migration_credentials这个字符串到配置ini文件中  
 设置GCS的access_key：
 {
     "aws_access_key_id": "your_aws_access_key_id",
@@ -85,14 +86,15 @@ PUT 模式(3GSync运行在AWS EC2)需要在AWS ssm parameter store手工新建�
 Write/Read Capacity 设置为 OnDemand（按需）  
 可选：设置一个TTL，键值为endTime的，这样传输结束之后会被DDB自动清理掉  
 ![DDB](./img/03.png) 
+这个 DynamoDB 只用于在ini中配置了启用 Version 功能的情况，但程序启动就会做环境检查，所以即使不用，也要创建一个空的 DynamoDB 表。
 
-### 3. 配置一个 sqs 和一个 sqs dlq （死信队列）
-名称：s3_migration_file_list  和  s3_migration_file_list_deadletter  
+### 3. 配置一个 SQS 和一个 SQS DLQ （死信队列）
+名称：s3_migration_file_list (跟ini配置文件中的队列名称 sqs_queue_name 对应) 和  s3_migration_file_list_deadletter  
 要建在S3所在的region  
 SQS Visibility timeout = 1 hour，Message retention period = 14 days  
 ![SQS](./img/04.png) 
 
-### 4. SQS access policy  
+### 4. SQS access policy 允许 S3 写入 
 写入SQS权限："Service": "s3.amazonaws.com"  
 读取SQS权限：直接填 AWS Account Number  
 样例：  
@@ -138,18 +140,19 @@ SQS Visibility timeout = 1 hour，Message retention period = 14 days
 Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失败的消息  
 建好之后，要指定主SQS的死信队列是这个，以及重试多少次之后会进入死信队列  
 
-### 5. 设置 s3 bucket trigger SQS  
+### 5. 设置 S3 Bucket Trigger SQS  
 在存储桶属性里面设置 Event notifications  
 如果S3跟SQS不在同一个账号下，则SQS queue这里选择 SQS的ARN  
 ![S3 trigger SQS](./img/05.png) 
 
-### 6. 创建和设置 GCE 实例组 Managed Instance Group (Stateless)  
-服务器的IAM需要有访问 Secret Manager Secret Accessor 的权限
+### 6. 创建服务器组并部署 3GSync 程序  
+创建 GCE 实例组 Managed Instance Group (Stateless) 或 EC2 Autoscaling Group 
+GCE 服务器的IAM Service Account 需要 Secret Manager Secret Accessor 的权限，如果是 EC2 则配置前面第1步所创建的IAM Role（访问S3/SQS/SSM/DynamoDB)
 代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。  
 初次下载源代码：  
 ```
 git clone https://github.com/hawkey999/s3-to-gcs-migration-cluster
-cd cluster  
+cd s3-to-gcs-migration-cluster/cluster  
 ```
 * 配置 s3_migration_cluster_config.ini 文件
 GET 模式（3GSync运行在GCE）配置文件至少需要修改：
@@ -203,9 +206,10 @@ sudo python3 get-pip.py
   
 * 然后运行文件  
 python3 s3_migration_cluster_worker.py   
+建议采用后台运行，运行后程序会指示log文件的位置，根据log日志即可进行故障定位。默认log level是INFO，可以在ini配置文件中修改。
   
 ## 可选：文件过滤模式   
-* 在迁移程序代码中增加一个Ignore List，在SQS获取消息后会检查Prefix是否在这个Ignore List里面，如果在的话就跳过迁移传输，而直接删除SQS消息。编辑 s3_migration_ignore_list.txt 增加你要忽略对象的 bucket/key，一个文件一行，可以使用通配符如 "*"或"?"，例如：  
+* 在迁移程序代码中有一个Ignore List文件，在SQS获取消息后会检查Prefix是否在这个Ignore List里面，如果在的话就跳过迁移传输，而直接删除SQS消息。编辑 s3_migration_ignore_list.txt 增加你要忽略对象的 bucket/key，一个文件一行，可以使用通配符如 "*"或"?"，例如：  
 ```
 your_src_bucket/your_exact_key.mp4
 your_src_bucket/your_exact_key
