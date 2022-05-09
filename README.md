@@ -1,10 +1,10 @@
 # 3GSync - AWS S3 to GCS 近实时增量数据同步
 
 Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS。  
-* 3GSync 可以运行在 GCP GCE 上，架构图如下：  
+* 3GSync 可以运行在 GCP GCE 上（配置为GET模式），架构图如下：  
 ![Cluster Diagram gcp](./img/01.png)  
   
-* 3GSync 也可以运行在 AWS EC2 上，架构图如下：  
+* 3GSync 也可以运行在 AWS EC2 上（配置为PUT模式），架构图如下：  
 ![Cluster Diagram ec2](./img/e01.png)  
 
 ## 工作原理  
@@ -43,10 +43,10 @@ Amazon SQS 配置死信队列DLQ，确保消息被多次重新仍失败进入DLQ
 
 ## 部署
 ### 1. 配置密钥
-* 服务器运行在GCP GCE的情况：新建AWS IAM User给读取 S3/SQS/DynamoDB 用，并获取 AK/SK 密钥，需要的IAM权限：  
+* GET模式，服务器运行在GCP GCE的情况：新建AWS IAM User给读取 S3/SQS/DynamoDB 用，并获取 AK/SK 密钥，需要的IAM权限：  
 读取S3: AmazonS3ReadOnlyAccess, 读写DynamoDB AmazonDynamoDBFullAccess, 读写SQS AmazonSQSFullAccess    
 ![IAM](./img/06.png)   
-对于服务器运行在AWS EC2的情况：新建AWS IAM Role给服务器读取 S3、SQS、DynamoDB、SSM 用。  
+PUT模式，服务器运行在AWS EC2的情况：新建AWS IAM Role给服务器读取 S3、SQS、DynamoDB、SSM 用。  
   
 * 在 GCS 的设置“互操作性”中可以获取 GCP 一侧的 ak/sk 密钥  
 
@@ -80,7 +80,7 @@ PUT 模式(3GSync运行在AWS EC2)需要在 AWS SSM Parameter Store 新建一个
 配置示意图：  
 ![配置示意图](./img/02.png) 
 
-### 2. 配置一个 DynamoDB 表跟服务器在同一个region: Oregon  
+### 2. 配置一个 DynamoDB 表跟服务器在S3同一个region
 表名，例如：s3_migration_file_list  
 主键：Key  
 Write/Read Capacity 设置为 OnDemand（按需）  
@@ -88,7 +88,7 @@ Write/Read Capacity 设置为 OnDemand（按需）
 ![DDB](./img/03.png) 
 这个 DynamoDB 只用于在ini中配置了启用 Version 功能的情况，但程序启动就会做环境检查，所以即使不用，也要创建一个空的 DynamoDB 表。
 
-### 3. 配置一个 SQS 和一个 SQS DLQ （死信队列）
+### 3. 配置一个 SQS 和一个 SQS DLQ （死信队列）跟S3在同一个region
 名称：s3_migration_file_list (跟ini配置文件中的队列名称 sqs_queue_name 对应) 和  s3_migration_file_list_deadletter  
 要建在S3所在的region  
 SQS Visibility timeout = 1 hour，Message retention period = 14 days  
@@ -146,16 +146,16 @@ Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失�
 ![S3 trigger SQS](./img/05.png) 
 
 ### 6. 创建服务器组并部署 3GSync 程序  
-创建 GCE 实例组 Managed Instance Group (Stateless) 或 EC2 Autoscaling Group 
-GCE 服务器的IAM Service Account 需要 Secret Manager Secret Accessor 的权限，如果是 EC2 则配置前面第1步所创建的IAM Role（访问S3/SQS/SSM/DynamoDB)
-代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。  
+GET模式下：创建 GCE 实例组 Managed Instance Group (Stateless) 或 PUT模式下：EC2 Autoscaling Group 
+GET模式下 GCE 服务器的IAM Service Account 需要 Secret Manager Secret Accessor 的权限，如果是PUT模式下 EC2 则配置前面第1步所创建的IAM Role（访问S3/SQS/SSM/DynamoDB)
+代码下载方式：建议代码放一个单独的bucket，然后服务器启动的时候从该桶自动下载。  
 初次下载源代码：  
 ```
 git clone https://github.com/hawkey999/s3-to-gcs-migration-cluster
 cd s3-to-gcs-migration-cluster/cluster  
 ```
 * 配置 s3_migration_cluster_config.ini 文件
-GET 模式（3GSync运行在GCE）配置文件至少需要修改：
+GET 模式（3GSync运行在GCP GCE）配置文件至少需要修改：
 ```
 * JobType = GET
 
