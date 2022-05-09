@@ -18,9 +18,10 @@ import sys
 import time
 from fnmatch import fnmatchcase
 from pathlib import PurePosixPath, Path
-from google.cloud import secretmanager
 
 logger = logging.getLogger()
+Max_md5_retry = 2
+
 
 # Configure logging
 def set_log(LoggingLevel, this_file_name):
@@ -43,83 +44,50 @@ def set_log(LoggingLevel, this_file_name):
 
 
 # Set environment
-def set_env(*, JobType, SrcEndPointURL, DestEndPointURL, LocalProfileMode, 
+def set_env(*, JobType, SrcEndPointURL, DestEndPointURL, 
     table_queue_name, sqs_queue_name, ssm_parameter_credentials, MaxRetry):
     s3_config = Config(max_pool_connections=200, retries={'max_attempts': MaxRetry})  # boto default 10
+    sqs_config = Config(max_pool_connections=100)
+
     logger.info('Get instance-id and running region')
-    if JobType.upper() == "PUT":  # PUT: Running on AWS EC2 and get credentials from AWS Parameter Storage
+    instance_id = urllib.request.urlopen(urllib.request.Request(
+        "http://169.254.169.254/latest/meta-data/instance-id"
+    )).read().decode('utf-8')
+    region = json.loads(urllib.request.urlopen(urllib.request.Request(
+        "http://169.254.169.254/latest/dynamic/instance-identity/document"
+    )).read().decode('utf-8'))['region']
+    sqs = boto3.client('sqs', region, config=sqs_config)
+    dynamodb = boto3.resource('dynamodb', region)
+    ssm = boto3.client('ssm', region)
 
-        # GET AWS EC2 id and region
-        instance_id = urllib.request.urlopen(urllib.request.Request(
-            "http://169.254.169.254/latest/meta-data/instance-id"
-        )).read().decode('utf-8')
-        region = json.loads(urllib.request.urlopen(urllib.request.Request(
-            "http://169.254.169.254/latest/dynamic/instance-identity/document"
-        )).read().decode('utf-8'))['region']
-
-        # 取另一个Account的credentials
-        logger.info(f'Get ssm_parameter_credentials: {ssm_parameter_credentials}')
-        ssm = boto3.client('ssm', region)
-        try:
-            credentials = json.loads(ssm.get_parameter(
-                Name=ssm_parameter_credentials,
-                WithDecryption=True
-            )['Parameter']['Value'])
-        except Exception as e:
-            print(f'Fail to get {ssm_parameter_credentials} in SSM Parameter store. '
-            f'Fix and restart. {str(e)}')
-            sys.exit(0)
-        credentials_session = boto3.session.Session(
-            aws_access_key_id=credentials["aws_access_key_id"],
-            aws_secret_access_key=credentials["aws_secret_access_key"],
-            region_name=credentials["region"]
-        )
+    # 取另一个Account的credentials
+    logger.info(f'Get ssm_parameter_credentials: {ssm_parameter_credentials}')
+    try:
+        credentials = json.loads(ssm.get_parameter(
+            Name=ssm_parameter_credentials,
+            WithDecryption=True
+        )['Parameter']['Value'])
+    except Exception as e:
+        logger.error(f'Fail to get {ssm_parameter_credentials} in SSM Parameter store. '
+                        f'Fix and restart. {str(e)}')
+        sys.exit(0)
+    credentials_session = boto3.session.Session(
+        aws_access_key_id=credentials["aws_access_key_id"],
+        aws_secret_access_key=credentials["aws_secret_access_key"],
+        region_name=credentials["region"]
+    )
+    if JobType.upper() == "PUT":
         s3_src_client = boto3.client('s3', region, config=s3_config, endpoint_url=SrcEndPointURL)
         s3_des_client = credentials_session.client('s3', config=s3_config, endpoint_url=DestEndPointURL)
-        sqs = boto3.client('sqs', region)
-        dynamodb = boto3.resource('dynamodb', region)
-
-    elif JobType.upper() == "GET":  # GET: Running on GCP GCE and get credentials from Secret Manager
-        # GET GCE name
-        instance_id = urllib.request.urlopen(urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/name", headers={"Metadata-Flavor": "Google"}
-        )).read().decode('utf-8')
-
-        client_secretmanager = secretmanager.SecretManagerServiceClient()
-        # 取GCP Secret Manager credentials
-        logger.info(f'Get GCP Secret Manager credentials: {ssm_parameter_credentials}')
-        try:
-            response = client_secretmanager.access_secret_version(request={"name": ssm_parameter_credentials})
-            secret = json.loads(response.payload.data.decode("UTF-8"))
-        except Exception as e:
-            print(f'Fail to get {ssm_parameter_credentials} in GCP Secret Manager credentials '
-                        f'Fix and restart. {str(e)}')
-            sys.exit(0)
-        
-        src_credentials_session = boto3.session.Session(
-            aws_access_key_id=secret["source"]["aws_access_key_id"],
-            aws_secret_access_key=secret["source"]["aws_secret_access_key"],
-            region_name=secret["source"]["region"]
-        )
-        des_credentials_session = boto3.session.Session(
-            aws_access_key_id=secret["destination"]["aws_access_key_id"],
-            aws_secret_access_key=secret["destination"]["aws_secret_access_key"],
-            region_name=secret["destination"]["region"]
-        )
-        s3_des_client = des_credentials_session.client('s3', config=s3_config, endpoint_url=DestEndPointURL)
-        s3_src_client = src_credentials_session.client('s3', config=s3_config, endpoint_url=SrcEndPointURL)
-        sqs = src_credentials_session.client('sqs')
-        dynamodb = src_credentials_session.resource('dynamodb')
-        region = secret["source"]["region"]
+    elif JobType.upper() == "GET":
+        s3_des_client = boto3.client('s3', region, config=s3_config, endpoint_url=DestEndPointURL)
+        s3_src_client = credentials_session.client('s3', config=s3_config, endpoint_url=SrcEndPointURL)
     else:
-        print('Wrong JobType setting in config.ini file')
+        logger.error('Wrong JobType setting in config.ini file')
         sys.exit(0)
 
-    logger.info(f"Check and wait for DynamoDB: {table_queue_name} in AWS region {region}. ")
     table = dynamodb.Table(table_queue_name)
-    if table.table_status != "ACTIVE":
-        print(f"Can't get DynamoDB: {table_queue_name} in AWS region {region}. DynamoDB only use for S3 GetObjectWithVersionId enabled in s3_migration_cluster_config.ini. You still need to create an empty table even you don't use it.")
-    logger.info(f"Check and wait for SQS: {sqs_queue_name} in AWS region {region}. ")
+    table.wait_until_exists()
     sqs_queue = wait_sqs_available(
         sqs=sqs,
         sqs_queue_name=sqs_queue_name
@@ -874,7 +842,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
 
     # 开始 Job 步骤
     # 循环重试3次（如果MD5计算的ETag，或VersionID不一致）
-    for md5_retry in range(MaxRetry + 1):
+    for md5_retry in range(Max_md5_retry + 1):
         # Job 准备
         # 检查文件没Multipart UploadID要新建, 有则 return UploadID
         response_check_upload = check_file_exist(
@@ -972,7 +940,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 Des_bucket=Des_bucket
             )
             multipart_uploaded_list = []
-            if md5_retry >= MaxRetry:
+            if md5_retry >= Max_md5_retry:
                 logger.error(f'Quit job upload_etag_full ERR - {upload_etag_full} - {str(job)}')
                 return 'ERR'
             continue
@@ -995,7 +963,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                 Des_bucket=Des_bucket
             )
             multipart_uploaded_list = []
-            if md5_retry >= MaxRetry:
+            if md5_retry >= Max_md5_retry:
                 logger.error(f'Quit job complete_etag - {upload_etag_full} - {str(job)}')
                 return 'ERR'
             continue
@@ -1022,7 +990,7 @@ def step_function(*, job, table, s3_src_client, s3_des_client, instance_id,
                     Des_bucket=Des_bucket
                 )
                 multipart_uploaded_list = []
-                if md5_retry >= MaxRetry:
+                if md5_retry >= Max_md5_retry:
                     logger.error(f'Quit job ifVerifyMD5Twice - {upload_etag_full} - {str(job)}')
                     return 'ERR'
                 continue

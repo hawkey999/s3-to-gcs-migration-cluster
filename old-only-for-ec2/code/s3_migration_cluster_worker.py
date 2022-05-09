@@ -14,7 +14,6 @@ try:
     cfg.read(f'{file_path}/s3_migration_cluster_config.ini', encoding='utf-8-sig')
     table_queue_name = cfg.get('Basic', 'table_queue_name')
     sqs_queue_name = cfg.get('Basic', 'sqs_queue_name')
-    ssm_parameter_bucket = cfg.get('Basic', 'ssm_parameter_bucket')
     ssm_parameter_credentials = cfg.get('Basic', 'ssm_parameter_credentials')
     JobType = cfg.get('Basic', 'JobType')
     SrcEndPointURL = cfg.get('Basic', 'SrcEndPointURL')
@@ -30,7 +29,6 @@ try:
     JobTimeout = cfg.getint('Mode', 'JobTimeout')
     LoggingLevel = cfg.get('Debug', 'LoggingLevel')
     CleanUnfinishedUpload = cfg.getboolean('Debug', 'CleanUnfinishedUpload')
-    LocalProfileMode = cfg.getboolean('Debug', 'LocalProfileMode')
     UpdateVersionId = cfg.getboolean('Mode', 'UpdateVersionId')
     GetObjectWithVersionId = cfg.getboolean('Mode', 'GetObjectWithVersionId')
     try:
@@ -47,7 +45,6 @@ except Exception as e:
 try:
     table_queue_name = os.environ['table_queue_name']
     sqs_queue_name = os.environ['sqs_queue_name']
-    ssm_parameter_bucket = os.environ['ssm_parameter_bucket']
 except Exception as e:
     print("No Environment Variable from CDK, use the para from config.ini", str(e))
 
@@ -58,11 +55,10 @@ if __name__ == '__main__':
     logger, log_file_name = set_log(LoggingLevel, 'ec2-worker')
 
     # Get Environment
-    sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_id, ssm = \
+    sqs, sqs_queue, table, s3_src_client, s3_des_client, instance_id = \
         set_env(JobType=JobType,
                 SrcEndPointURL=SrcEndPointURL,
                 DestEndPointURL=DestEndPointURL,
-                LocalProfileMode=LocalProfileMode,
                 table_queue_name=table_queue_name,
                 sqs_queue_name=sqs_queue_name,
                 ssm_parameter_credentials=ssm_parameter_credentials,

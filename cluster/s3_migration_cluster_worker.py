@@ -29,7 +29,6 @@ try:
     JobTimeout = cfg.getint('Mode', 'JobTimeout')
     LoggingLevel = cfg.get('Debug', 'LoggingLevel')
     CleanUnfinishedUpload = cfg.getboolean('Debug', 'CleanUnfinishedUpload')
-    LocalProfileMode = cfg.getboolean('Debug', 'LocalProfileMode')
     UpdateVersionId = cfg.getboolean('Mode', 'UpdateVersionId')
     GetObjectWithVersionId = cfg.getboolean('Mode', 'GetObjectWithVersionId')
     try:
@@ -60,7 +59,6 @@ if __name__ == '__main__':
         set_env(JobType=JobType,
                 SrcEndPointURL=SrcEndPointURL,
                 DestEndPointURL=DestEndPointURL,
-                LocalProfileMode=LocalProfileMode,
                 table_queue_name=table_queue_name,
                 sqs_queue_name=sqs_queue_name,
                 ssm_parameter_credentials=ssm_parameter_credentials,

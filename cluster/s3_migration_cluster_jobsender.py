@@ -20,7 +20,6 @@ try:
     sqs_queue_name = cfg.get('Basic', 'sqs_queue_name')
     ssm_parameter_bucket = cfg.get('Basic', 'ssm_parameter_bucket')
     ssm_parameter_credentials = cfg.get('Basic', 'ssm_parameter_credentials')
-    LocalProfileMode = cfg.getboolean('Debug', 'LocalProfileMode')
     JobType = cfg.get('Basic', 'JobType')
     SrcEndPointURL = cfg.get('Basic', 'SrcEndPointURL')
     DestEndPointURL = cfg.get('Basic', 'DestEndPointURL')
@@ -53,7 +52,6 @@ if __name__ == '__main__':
         set_env(JobType=JobType,
                 SrcEndPointURL=SrcEndPointURL,
                 DestEndPointURL=DestEndPointURL,
-                LocalProfileMode=LocalProfileMode,
                 table_queue_name=table_queue_name,
                 sqs_queue_name=sqs_queue_name,
                 ssm_parameter_credentials=ssm_parameter_credentials,

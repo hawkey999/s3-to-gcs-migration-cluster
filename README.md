@@ -1,8 +1,11 @@
 # 3GSync - AWS S3 to GCS 近实时增量数据同步
 
-Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS：
-![Cluster Diagram New created object in S3](./img/01.png)  
+Amazon S3 新增文件触发 SQS 事件，由3GSync工具获取SQS消息，并进行S3传输到GCS。3GSync也可以配置为运行在GCP的GCE上，架构图如下：  
+![Cluster Diagram gcp](./img/01.png)  
   
+3GSync也可以运行在 AWS EC2 上，  
+![Cluster Diagram ec2](./img/e01.png)  
+
 ## 工作原理  
 0. 存量数据列表（可选功能）：Jobsender 获取源和目的 Bucket List并比对差异，发送 Job messages 到 SQS。  
 
@@ -48,7 +51,7 @@ Amazon SQS 配置死信队列DLQ，确保消息被多次重新仍失败进入DLQ
 
 * 配置 GCP Secret Manager 用于保存S3和GCS一侧的访问密钥  
 ```
-GET 模式需要在GCP Secret Manager手工新建一个密钥，配置资源ID到配置ini文件中
+GET 模式(3GSync运行在GCP GCE)需要在GCP Secret Manager手工新建一个密钥，配置资源ID到配置ini文件中
 密钥格式如下，source是S3，destination是GCS：
 { 
     "source": 
@@ -65,7 +68,7 @@ GET 模式需要在GCP Secret Manager手工新建一个密钥，配置资源ID�
     }
 }
 
-PUT 模式需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter, 并在上面等号后面填 s3_migrate_credentials
+PUT 模式(3GSync运行在AWS EC2)需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter, 并在上面等号后面填 s3_migrate_credentials
 设置GCS的access_key：
 {
     "aws_access_key_id": "your_aws_access_key_id",
@@ -143,10 +146,16 @@ Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失�
 ### 6. 创建和设置 GCE 实例组 Managed Instance Group (Stateless)  
 服务器的IAM需要有访问 Secret Manager Secret Accessor 的权限
 代码下载方式：建议代码放 S3 一个单独的bucket，然后服务器启动的时候，自动从该S3桶自动下载。  
-源代码：https://github.com/hawkey999/s3-to-gcs-migration-cluster/cluster-gce+secret-manager  
-* 配置 s3_migration_cluster_config.ini 文件
-配置文件至少需要修改：
+初次下载源代码：  
 ```
+git clone https://github.com/hawkey999/s3-to-gcs-migration-cluster
+cd cluster  
+```
+* 配置 s3_migration_cluster_config.ini 文件
+GET 模式（3GSync运行在GCE）配置文件至少需要修改：
+```
+* JobType = GET
+
 * Des_bucket_default/Des_prefix_default
 配置目标桶名字，前缀可以留空
 
@@ -155,14 +164,29 @@ Optional：建一个SQS 死信队列，用来存储主SQS队列处理多次失�
 ```
 ![资源ID](./img/02b.png) 
   
+PUT 模式（3GSync运行在AWS EC2）配置文件至少需要修改：
+```
+* JobType = PUT
+
+* Des_bucket_default/Des_prefix_default
+配置目标桶名字，前缀可以留空
+
+* ssm_parameter_credentials = s3_migration_credentials
+PUT 模式需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter 如下, 并在上面等号后面填 s3_migrate_credentials
+
+```
+![parameter](./img/e02.png) 
+
+其实PUT和GET模式主要区别是运行在AWS或GCP上的服务器，这样通过服务器IAM获取密钥的方式就不同。  
+GET是运行在GCP GCE，这样通过本服务器的IAM ServiceAccount可以获取到访问 Serect Manager 的权限，然后通过Secrect Manager拿到 AWS 一侧的IAM AK/SK，以及 GCS 的兼容 AK/SK。（代码为了兼容和便于迁移，所以GCS一侧访问的是XML接口，即兼容S3 SDK的接口，所以GCS 的AK/SK是通过GCS的互操作获取到的）。  
+PUT是运行在AWS EC2，这样通过本服务器的IAM Role可以获取到访问S3的权限，访问SQS和DynamoDB的权限，以及获取到访问SSM的权限，并通过SSM拿到GCP一侧的GCS访问密钥（AK/SK模式）。  
+
 * 安装Python包  
 pip3 install -r requirements.txt   
   
 * 然后运行文件  
 python3 s3_migration_cluster_worker.py   
-   
-* 备选模块：cluster-ec2+parameter-store 那个是给部署在AWS EC2一侧的场景中使用的  
-
+  
 ## 可选：文件过滤模式   
 * 在迁移程序代码中增加一个Ignore List，在SQS获取消息后会检查Prefix是否在这个Ignore List里面，如果在的话就跳过迁移传输，而直接删除SQS消息。编辑 s3_migration_ignore_list.txt 增加你要忽略对象的 bucket/key，一个文件一行，可以使用通配符如 "*"或"?"，例如：  
 ```
@@ -200,9 +224,6 @@ True意味着：Worker 在开始下载源文件之前是否更新Job所记录的
 * GetObjectWithVersionId(True/False)：  
 默认 Flase。  
 True意味着：Worker 在获取源文件的时候，是否带 versionId 去获取。如果不带 versionId 则获取当前最新文件。  
-  
-对于Cluster版本，以上参数都在配置文件 s3_migration_config.ini 
-对于Serverless版本，以上参数分别在 Lambda jobsender 和 worker Python 文件的头部，内部参数定义的位置  
 
 ### 场景
 * S3新增文件触发的SQS Jobs：  
