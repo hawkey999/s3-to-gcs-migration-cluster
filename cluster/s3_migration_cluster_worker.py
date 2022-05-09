@@ -46,7 +46,7 @@ try:
     table_queue_name = os.environ['table_queue_name']
     sqs_queue_name = os.environ['sqs_queue_name']
 except Exception as e:
-    print("No Environment Variable from CDK, use the para from config.ini", str(e))
+    print("Use the para from config.ini for table_queue_name and sqs_queue_name")
 
 # Main
 if __name__ == '__main__':

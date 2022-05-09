@@ -172,7 +172,7 @@ PUT 模式（3GSync运行在AWS EC2）配置文件至少需要修改：
 配置目标桶名字，前缀可以留空
 
 * ssm_parameter_credentials = s3_migration_credentials
-PUT 模式需要在AWS ssm parameter store手工新建一个名为 "s3_migrate_credentials" 的 parameter 如下, 并在上面等号后面填 s3_migrate_credentials
+PUT 模式需要在AWS ssm parameter store手工新建一个名为 "s3_migration_credentials" 的 parameter 如下, 并在上面等号后面填 s3_migration_credentials
 
 ```
 ![parameter](./img/e02.png) 
@@ -182,7 +182,24 @@ GET是运行在GCP GCE，这样通过本服务器的IAM ServiceAccount可以获�
 PUT是运行在AWS EC2，这样通过本服务器的IAM Role可以获取到访问S3的权限，访问SQS和DynamoDB的权限，以及获取到访问SSM的权限，并通过SSM拿到GCP一侧的GCS访问密钥（AK/SK模式）。  
 
 * 安装Python包  
+```
 pip3 install -r requirements.txt   
+```
+如果环境中没有pip3或者没有Python3，则需要安装，以下是 Ubuntu/Debian：  
+```
+sudo apt-get update -y
+sudo apt-get install git -y
+sudo apt-get install python3-setuptools python3-dev build-essential -y
+curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+sudo python3 get-pip.py
+```
+以下是 CentOS：
+```
+sudo yum update -y
+sudo yum install python3 -y
+curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+sudo python3 get-pip.py
+```
   
 * 然后运行文件  
 python3 s3_migration_cluster_worker.py   
